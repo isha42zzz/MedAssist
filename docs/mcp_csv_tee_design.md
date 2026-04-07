@@ -22,7 +22,7 @@
 
 建议在 CSV TEE 内使用如下技术栈：
 
-- 服务层：`gRPC server` 或 `FastAPI`
+- 服务层：自定义 `TCP + protobuf frame + secure envelope`
 - 主推理引擎：`ONNX Runtime`
 - 可选小模型适配器：`llama.cpp`
 - 模型注册表：本地 manifest 文件或 SQLite
@@ -100,8 +100,8 @@
 
 因此必须满足：
 
-- TLS 终止必须发生在 TEE 内
 - 远程认证结果必须与会话密钥绑定
+- 业务安全信道只能在远程认证完成后建立
 
 ## 4. 目标架构
 
@@ -133,26 +133,37 @@ flowchart LR
 
 ```mermaid
 sequenceDiagram
+    participant D as Dify Workflow
     participant H as 医院侧 MCP
     participant T as CSV TEE 服务
     participant V as 远程认证验证器
 
+    D->>D: 生成 workflow_context_id
+    D->>H: ListModels(workflow_context_id)
+    H->>H: 若本地 context 不存在则自动建链
     H->>H: 生成 nonce 和临时公钥
-    H->>T: StartSession(nonce, hospital_cert, hospital_ephemeral_pubkey)
+    H->>T: StartSession(nonce, hospital_org_id, hospital_ephemeral_pubkey)
     T->>T: 生成 TEE 临时密钥对
-    T->>T: 将 hash(tee_pubkey || nonce) 写入 UserData
+    T->>T: 将 hash(tee_pubkey || hospital_pubkey || nonce) 写入 UserData
     T->>T: 生成 CSV attestation report
-    T-->>H: report, tee_ephemeral_pubkey, service_cert_chain, policy_summary
+    T-->>H: report, tee_ephemeral_pubkey, tee_session_id
     H->>V: 验证 report 与策略
     V-->>H: valid / invalid
     H->>H: 校验 UserData 绑定关系、nonce 新鲜度、TEE 策略
-    H->>T: FinishSession(client_key_share 或双向 TLS 后续握手)
-    T-->>H: 会话建立完成
-    H->>T: ListModels(session_id, department, task_type)
+    H->>H: 通过 X25519 + HKDF 派生会话密钥
+    H->>T: 发送第一个加密 HandshakeOpen 消息
+    T-->>H: 加密确认，会话建立完成
+    H->>H: 缓存 workflow_context_id -> tee_session_id + session_handle
+    H->>T: ListModels(tee_session_id)
     T-->>H: 可用模型列表
-    H->>H: 选择 model_id 与版本
-    H->>T: InvokeDiagnosis(session_id, model_id, input)
+    D->>H: DescribeModel(workflow_context_id, model_id)
+    H->>T: DescribeModel(tee_session_id, model_id)
+    T-->>H: 输入输出元数据
+    D->>H: InvokeDiagnosis(workflow_context_id, model_id, input)
+    H->>T: InvokeDiagnosis(tee_session_id, model_id, input)
     T-->>H: 结构化诊断结果
+    D->>H: ReleaseContext(workflow_context_id)
+    H->>T: EndSession(tee_session_id)
 ```
 
 ### 5.3 医院侧必须校验的内容
@@ -176,6 +187,7 @@ sequenceDiagram
 ```text
 SHA256(
   tee_ephemeral_pubkey ||
+  hospital_ephemeral_pubkey ||
   client_nonce
 )
 ```
@@ -189,34 +201,22 @@ SHA256(
 
 ## 6. 安全信道选择
 
-### 6.1 首选方式
+### 6.1 一期实现方式
 
-首选建议为：
+当前一期实现采用：
 
-- `gRPC over TLS 1.3`
-- 双向认证
-- 将远程认证结果绑定到 TLS 会话密钥或证书
+- 明文 bootstrap 通道承载 `StartSession`
+- 远程认证成功后，基于双方临时 X25519 公钥派生会话密钥
+- 业务请求统一走 `AES-256-GCM` 加密 envelope
+- 每个方向维护独立单调递增序号，拒绝重放
 
-### 6.2 更强、更标准化的方式
+### 6.2 后续可演进方向
 
-如果环境允许，建议进一步采用：
+如果后续希望采用更标准化的 attested transport，可以再演进到：
 
 - `RATS-TLS`
 
-原因如下：
-
-- 它专门面向带远程认证能力的安全通信
-- 开源实现中已经列出了 CSV 对应的 attester/verifier 能力
-- 设计思想与机密计算场景下的可信传输模型高度一致
-
-### 6.3 实际落地建议
-
-为了控制一期复杂度，建议分两阶段：
-
-- 一期：`mTLS + 外部远程认证校验 + UserData 绑定`
-- 二期：演进到 `RATS-TLS`
-
-这样可以先把正确的信任模型落下去，同时避免一期实现过重。
+但当前仓库实现不依赖 `mTLS` 或服务端证书来证明 TEE 可信性。
 
 ## 7. 医院侧 MCP 设计
 
@@ -233,51 +233,18 @@ SHA256(
 
 ### 7.2 建议的 MCP 工具接口
 
-#### `attest_open_session`
-
-用途：
-
-- 发起远程认证
-- 建立经过认证的安全会话
-
-请求示例：
-
-```json
-{
-  "nonce": "base64-encoded-random",
-  "hospital_identity": {
-    "org_id": "hospital-a",
-    "cert_ref": "cert://hospital-a-client-cert"
-  }
-}
-```
-
-响应示例：
-
-```json
-{
-  "session_id": "sess_123456",
-  "attestation_summary": {
-    "verified": true,
-    "tee_type": "csv"
-  },
-  "expires_at": "2026-04-03T10:30:00Z"
-}
-```
-
 #### `list_models`
 
 用途：
 
-- 在已经建立的安全会话中，返回当前医院有权限调用的模型清单
+- 以 `workflow_context_id` 为键返回模型清单
+- 若该 context 首次出现，由医院侧 MCP 在内部自动完成 attestation 和建链
 
 请求示例：
 
 ```json
 {
-  "session_id": "sess_123456",
-  "department": "cardiology",
-  "task_type": "risk_prediction"
+  "workflow_context_id": "wf_run_20260407_001"
 }
 ```
 
@@ -288,10 +255,59 @@ SHA256(
   "models": [
     {
       "model_id": "cardio-risk-v1",
+      "display_name": "Cardio Risk v1",
       "version": "1.2.0",
-      "engine": "onnxruntime"
+      "engine": "onnxruntime",
+      "summary": "Structured heart disease risk model with 9 clinical input features."
     }
   ]
+}
+```
+
+#### `describe_model`
+
+用途：
+
+- 返回指定模型的输入特征、单位、允许值和输出说明
+- 供 Dify 根据模型元数据动态构造表单和提示词
+
+请求示例：
+
+```json
+{
+  "workflow_context_id": "wf_run_20260407_001",
+  "model_id": "cardio-risk-v1"
+}
+```
+
+响应示例：
+
+```json
+{
+  "model_id": "cardio-risk-v1",
+  "display_name": "Cardio Risk v1",
+  "version": "1.2.0",
+  "engine": "onnxruntime",
+  "summary": "Structured heart disease risk model with 9 clinical input features.",
+  "description": "Estimates a heart disease risk probability from structured cardiovascular features.",
+  "input_features": [
+    {
+      "name": "age",
+      "label": "Age",
+      "type": "number",
+      "unit": "years",
+      "description": "Patient age.",
+      "allowed_values": []
+    }
+  ],
+  "output_spec": {
+    "name": "risk_score",
+    "label": "Risk Score",
+    "type": "number",
+    "description": "Heart disease risk probability produced by the demo model.",
+    "range_min": 0.0,
+    "range_max": 1.0
+  }
 }
 ```
 
@@ -299,13 +315,13 @@ SHA256(
 
 用途：
 
-- 通过已建立的安全会话发起推理或诊断请求
+- 通过 `workflow_context_id` 绑定的内部安全会话发起推理或诊断请求
 
 请求示例：
 
 ```json
 {
-  "session_id": "sess_123456",
+  "workflow_context_id": "wf_run_20260407_001",
   "request_id": "req_abc001",
   "model_id": "cardio-risk-v1",
   "input": {
@@ -330,7 +346,8 @@ SHA256(
   "model_id": "cardio-risk-v1",
   "model_version": "1.2.0",
   "result": {
-    "risk_score": 0.82
+    "output_name": "risk_score",
+    "output_value": 0.82
   }
 }
 ```
@@ -339,15 +356,25 @@ SHA256(
 
 用途：
 
-- 返回当前会话的认证摘要信息，供审计或界面展示
+- 返回当前 `workflow_context_id` 对应内部会话的认证摘要信息，供审计或界面展示
 
-#### `close_session`
+#### `release_context`
 
 用途：
 
-- 关闭安全会话并清理会话密钥
+- 结束当前 `workflow_context_id` 对应的内部安全会话并清理医院侧本地缓存
+- 该接口应采用幂等 best-effort 语义
 
-### 7.3 MCP 内部模块建议
+### 7.3 当前 TTL 建议
+
+为降低 Dify workflow 长流程被误清理的概率，当前建议采用较长的默认 TTL：
+
+- 医院侧本地 `workflow_context` TTL：`10800` 秒
+- TEE 侧 `session` TTL：`11400` 秒
+
+这是一种工程上的缓解策略，不是机制级修复。正常流程仍应在 workflow 最后调用 `release_context`，TTL 只负责异常退出、漏收尾和长流程的兜底回收。
+
+### 7.4 MCP 内部模块建议
 
 建议拆分如下内部模块：
 
@@ -378,34 +405,71 @@ SHA256(
 ```json
 {
   "model_id": "cardio-risk-v1",
+  "display_name": "Cardio Risk v1",
   "model_version": "1.2.0",
   "backend": "onnxruntime",
-  "artifact_uri": "/models/cardio-risk-v1/model.onnx",
+  "summary": "Structured heart disease risk model with 9 clinical input features.",
+  "description": "Estimates a heart disease risk probability from structured cardiovascular features.",
+  "input_features": [
+    {
+      "name": "age",
+      "label": "Age",
+      "type": "number",
+      "unit": "years",
+      "description": "Patient age.",
+      "allowed_values": []
+    },
+    {
+      "name": "sex",
+      "label": "Sex",
+      "type": "enum",
+      "unit": "category",
+      "description": "Biological sex used by the model.",
+      "allowed_values": ["female", "male"]
+    }
+  ],
+  "output_spec": {
+    "name": "risk_score",
+    "label": "Risk Score",
+    "type": "number",
+    "description": "Single-value risk score produced by the model.",
+    "range_min": 0.0,
+    "range_max": 1.0
+  },
+  "artifact_uri": "cardio-risk-v1.onnx",
   "artifact_sha256": "...."
 }
 ```
+
+说明：
+
+- `input_features` 是当前模型的唯一输入契约来源
+- `invoke_diagnosis` 提交的是一个通用 `input` 对象，字段名和值都以这里定义为准
+- 当前实现中，`input_features` 里列出的字段默认全部必填
+- `output_spec` 用于描述模型输出的单值结果语义，实际返回值为 `output_name + output_value`
 
 ### 8.3 服务 API 建议
 
 建议使用：
 
-- 内部服务契约采用 `gRPC`
+- 内部服务契约采用 `protobuf`
+- 传输层采用 `TCP + 长度前缀 frame`
 
-建议 RPC 包括：
+建议业务消息包括：
 
 - `GetModelCatalog`
 - `StartSession`
-- `CompleteSession`
+- `HandshakeOpen`
+- `DescribeModel`
 - `RunInference`
 - `GetSessionEvidence`
 - `EndSession`
 
-### 8.4 为什么推荐 gRPC
+### 8.4 为什么采用 protobuf frame
 
 - 相比裸 JSON，更适合定义医疗模型输入输出结构
-- 更利于版本演进
-- 若后续需要支持大图片分块传输或流式结果，也更方便扩展
-- 更容易生成客户端 SDK
+- 保留了清晰 schema，又避免把安全链路绑定到 gRPC/mTLS
+- 更容易把 bootstrap 与 secure envelope 分层实现
 
 ## 9. 输入输出边界建议
 
@@ -432,7 +496,8 @@ SHA256(
 
 ```json
 {
-  "risk_score": 0.82
+  "output_name": "risk_score",
+  "output_value": 0.82
 }
 ```
 
@@ -462,7 +527,7 @@ SHA256(
 
 - 多家医院长时间复用同一组传输密钥
 - 允许业务请求退化到未认证的备用通道
-- 在 TEE 外终止 TLS
+- 在远程认证成功前直接发送业务请求
 
 ## 11. 模型加载策略
 
@@ -472,7 +537,7 @@ SHA256(
 
 建议做法：
 
-- 每个模型都带上元数据、摘要、输入输出 schema、后端类型
+- 每个模型都带上元数据、摘要、输入特征说明、输出说明、后端类型
 - 所有模型纳入可信模型注册表
 - 只允许加载白名单模型
 - 每个模型绑定独立策略
@@ -521,11 +586,11 @@ else:
 
 在正式实现前，建议明确以下事项：
 
-- 医院身份认证采用 mTLS 证书
+- 医院身份标识一期仅保留 `hospital_org_id`
 - 模型文件是直接明文存放在 TEE 镜像中
 - 远程认证验证器是完全放在医院 MCP 内部
 - 一期医院仅上传结构化特征
-- 最终协议是一阶段先用 mTLS 绑定方案
+- 最终协议一期采用 attestation-first 的自定义安全会话
 
 ## 14. 下一步推荐产出
 

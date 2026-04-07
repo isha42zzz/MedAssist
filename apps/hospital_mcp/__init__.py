@@ -1,0 +1,1 @@
+"""Hospital-side MCP service."""

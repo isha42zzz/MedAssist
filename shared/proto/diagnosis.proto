@@ -1,0 +1,158 @@
+syntax = "proto3";
+
+package medassist;
+
+import "google/protobuf/struct.proto";
+
+message StartSessionRequest {
+  bytes nonce = 1;
+  string hospital_org_id = 2;
+  bytes hospital_ephemeral_pubkey = 3;
+}
+
+message StartSessionResponse {
+  string session_id = 1;
+  bytes tee_ephemeral_pubkey = 2;
+  bytes attestation_report = 3;
+  string tee_type = 4;
+}
+
+message HandshakeOpenRequest {
+  string session_id = 1;
+}
+
+message HandshakeOpenResponse {
+  bool attested = 1;
+}
+
+message GetModelCatalogRequest {
+  string session_id = 1;
+}
+
+message ModelInfo {
+  string model_id = 1;
+  string display_name = 2;
+  string version = 3;
+  string engine = 4;
+  string summary = 5;
+}
+
+message GetModelCatalogResponse {
+  repeated ModelInfo models = 1;
+}
+
+message DescribeModelRequest {
+  string session_id = 1;
+  string model_id = 2;
+}
+
+message FeatureSpec {
+  string name = 1;
+  string label = 2;
+  string type = 3;
+  string unit = 4;
+  string description = 5;
+  repeated string allowed_values = 6;
+}
+
+message OutputSpec {
+  string name = 1;
+  string label = 2;
+  string type = 3;
+  string description = 4;
+  double range_min = 5;
+  double range_max = 6;
+}
+
+message DescribeModelResponse {
+  string model_id = 1;
+  string display_name = 2;
+  string version = 3;
+  string engine = 4;
+  string summary = 5;
+  string description = 6;
+  repeated FeatureSpec input_features = 7;
+  OutputSpec output_spec = 8;
+}
+
+message RunInferenceRequest {
+  string session_id = 1;
+  string request_id = 2;
+  string model_id = 3;
+  google.protobuf.Struct input = 4;
+}
+
+message RunInferenceResponse {
+  string request_id = 1;
+  string model_id = 2;
+  string model_version = 3;
+  string output_name = 4;
+  double output_value = 5;
+}
+
+message GetSessionEvidenceRequest {
+  string session_id = 1;
+}
+
+message SessionEvidence {
+  string session_id = 1;
+  string tee_type = 2;
+  string report_digest = 3;
+  string verified_user_data = 4;
+  string created_at = 5;
+}
+
+message GetSessionEvidenceResponse {
+  SessionEvidence evidence = 1;
+}
+
+message EndSessionRequest {
+  string session_id = 1;
+}
+
+message EndSessionResponse {
+  bool closed = 1;
+}
+
+message ErrorResponse {
+  string code = 1;
+  string message = 2;
+}
+
+message SecureRequest {
+  oneof payload {
+    HandshakeOpenRequest handshake_open = 1;
+    GetModelCatalogRequest get_model_catalog = 2;
+    DescribeModelRequest describe_model = 3;
+    RunInferenceRequest run_inference = 4;
+    GetSessionEvidenceRequest get_session_evidence = 5;
+    EndSessionRequest end_session = 6;
+  }
+}
+
+message SecureResponse {
+  oneof payload {
+    HandshakeOpenResponse handshake_open = 1;
+    GetModelCatalogResponse get_model_catalog = 2;
+    DescribeModelResponse describe_model = 3;
+    RunInferenceResponse run_inference = 4;
+    GetSessionEvidenceResponse get_session_evidence = 5;
+    EndSessionResponse end_session = 6;
+    ErrorResponse error = 7;
+  }
+}
+
+message SecureEnvelope {
+  string session_id = 1;
+  uint64 sequence = 2;
+  bytes ciphertext = 3;
+}
+
+message Frame {
+  oneof payload {
+    StartSessionRequest start_session_request = 1;
+    StartSessionResponse start_session_response = 2;
+    SecureEnvelope secure_envelope = 3;
+    ErrorResponse error = 4;
+  }
+}

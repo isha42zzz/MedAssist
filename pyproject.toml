@@ -1,0 +1,38 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "medassist"
+version = "0.1.0"
+description = "Phase 1 MedAssist hospital MCP and CSV TEE services"
+readme = "docs/mcp_csv_tee_design.md"
+requires-python = ">=3.10"
+dependencies = [
+  "cryptography>=45.0.0",
+  "mcp[cli]>=1.10.0",
+  "numpy>=1.26.0",
+  "onnx>=1.17.0",
+  "onnxruntime>=1.20.0",
+  "requests>=2.32.0",
+  "snowland-smx>=0.3.1",
+  "starlette>=0.46.0",
+  "uvicorn>=0.35.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "grpcio-tools>=1.72.0",
+  "pytest>=8.3.0",
+]
+
+[project.scripts]
+medassist-tee = "apps.tee_service.tee_session_server:main"
+medassist-mcp = "apps.hospital_mcp.server:main"
+medassist-build-model = "scripts.build_demo_onnx:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["apps", "shared", "scripts"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

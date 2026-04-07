@@ -1,0 +1,101 @@
+{
+  "models": [
+    {
+      "model_id": "cardio-risk-v1",
+      "display_name": "Cardio Risk v1",
+      "model_version": "1.0.0",
+      "backend": "onnxruntime",
+      "summary": "Structured heart disease risk model with 9 clinical input features.",
+      "description": "Estimates a heart disease risk probability from structured cardiovascular features. The output risk_score is a 0 to 1 probability-like score where larger values indicate higher risk.",
+      "input_features": [
+        {
+          "name": "age",
+          "label": "Age",
+          "type": "number",
+          "unit": "years",
+          "description": "Patient age.",
+          "allowed_values": []
+        },
+        {
+          "name": "sex",
+          "label": "Sex",
+          "type": "enum",
+          "unit": "category",
+          "description": "Biological sex used by the demo model.",
+          "allowed_values": ["female", "male"]
+        },
+        {
+          "name": "chest_pain_type",
+          "label": "Chest Pain Type",
+          "type": "enum",
+          "unit": "category",
+          "description": "Chest pain presentation category.",
+          "allowed_values": [
+            "typical_angina",
+            "atypical_angina",
+            "non_anginal_pain",
+            "asymptomatic"
+          ]
+        },
+        {
+          "name": "resting_bp",
+          "label": "Resting Blood Pressure",
+          "type": "number",
+          "unit": "mmHg",
+          "description": "Resting blood pressure.",
+          "allowed_values": []
+        },
+        {
+          "name": "cholesterol",
+          "label": "Cholesterol",
+          "type": "number",
+          "unit": "mg/dL",
+          "description": "Serum cholesterol.",
+          "allowed_values": []
+        },
+        {
+          "name": "fasting_blood_sugar",
+          "label": "Fasting Blood Sugar Flag",
+          "type": "binary",
+          "unit": "flag",
+          "description": "1 means fasting blood sugar is above 120 mg/dL. 0 means fasting blood sugar is 120 mg/dL or below.",
+          "allowed_values": ["0", "1"]
+        },
+        {
+          "name": "max_heart_rate",
+          "label": "Maximum Heart Rate",
+          "type": "number",
+          "unit": "bpm",
+          "description": "Maximum achieved heart rate.",
+          "allowed_values": []
+        },
+        {
+          "name": "exercise_angina",
+          "label": "Exercise Induced Angina Flag",
+          "type": "binary",
+          "unit": "flag",
+          "description": "1 means exercise induced angina is present. 0 means it is absent.",
+          "allowed_values": ["0", "1"]
+        },
+        {
+          "name": "oldpeak",
+          "label": "Oldpeak",
+          "type": "number",
+          "unit": "unitless",
+          "description": "ST depression induced by exercise relative to rest.",
+          "allowed_values": []
+        }
+      ],
+      "output_spec": {
+        "name": "risk_score",
+        "label": "Risk Score",
+        "type": "number",
+        "description": "Heart disease risk probability produced by the demo model. The value is between 0.0 and 1.0, and lower values indicate lower risk.",
+        "range_min": 0.0,
+        "range_max": 1.0
+      },
+      "artifact_uri": "cardio-risk-v1.onnx",
+      "artifact_sha256": "8290bce52dea5171b8c9a370a07486a2f54f4ee86208dd52d94acf22c217f531"
+    }
+  ]
+}
