@@ -27,6 +27,11 @@
 - `uv`
 - 真实 CSV 环境运行 TEE 服务时，需要存在 `/dev/csv-guest`
 
+兼容性说明：
+
+- Python 3.10 环境会安装 `onnxruntime<1.24`
+- Python 3.11 及以上会安装较新的 `onnxruntime`
+
 安装依赖：
 
 ```bash
