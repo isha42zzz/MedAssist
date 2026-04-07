@@ -9,6 +9,8 @@ from .csv_attestation import AttestationReportProducor, AttestationReportVerifie
 
 TEE_TYPE = "csv"
 USERDATA_DIGEST_SIZE = 32
+CSV_USERDATA_SIZE = 64
+CSV_POLICY_NAMES = ("NODEBUG", "NOKS", "ES", "NOSEND", "DOMAIN", "CSV", "REUSE")
 
 
 @dataclass(frozen=True)
@@ -21,12 +23,28 @@ class ParsedAttestation:
     chip_id: str
 
 
+class _EncodedUserData:
+    def __init__(self, payload: bytes):
+        self._payload = payload
+
+    def __len__(self) -> int:
+        return len(self._payload)
+
+    def encode(self, _encoding: str = "utf-8") -> bytes:
+        return self._payload
+
+
 def build_user_data(tee_ephemeral_pubkey: bytes, hospital_ephemeral_pubkey: bytes, nonce: bytes) -> bytes:
     return sha256(tee_ephemeral_pubkey + hospital_ephemeral_pubkey + nonce).digest()
 
 
 def generate_report(userdata: bytes) -> bytes:
-    producer = AttestationReportProducor(userdata)
+    raw_user_data = bytes(userdata)
+    if len(raw_user_data) != USERDATA_DIGEST_SIZE:
+        raise ValueError(f"CSV attestation user data must be {USERDATA_DIGEST_SIZE} bytes")
+    producer = AttestationReportProducor(
+        _EncodedUserData(raw_user_data + bytes(CSV_USERDATA_SIZE - USERDATA_DIGEST_SIZE))
+    )
     return bytes(producer.report)
 
 
@@ -59,12 +77,11 @@ def _load_verifier(report: bytes) -> AttestationReportVerifier:
 def _policy_string(verifier: AttestationReportVerifier) -> str:
     labels = []
     raw_policy = int.from_bytes(verifier.real_report[0xB0:0xB4], "little")
-    policy_names = getattr(verifier, "_AttestationReportVerifier__policy")
-    for index, name in enumerate(policy_names):
+    for index, name in enumerate(CSV_POLICY_NAMES):
         if raw_policy & (1 << index):
             labels.append(name)
     labels.append("HSK_VERSION-0x%x" % ((raw_policy >> 8) & 0xF))
     labels.append("CEK_VERSION-0x%x" % ((raw_policy >> 12) & 0xF))
     labels.append("API_MAJOR-0x%x" % ((raw_policy >> 16) & 0xFF))
-    labels.append("API_MINOR-0x%x" % ((raw_policy >> 32) & 0xFF))
+    labels.append("API_MINOR-0x%x" % ((raw_policy >> 24) & 0xFF))
     return " || ".join(labels)

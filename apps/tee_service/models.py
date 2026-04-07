@@ -81,6 +81,8 @@ class ModelRegistry:
                 artifact_uri=artifact_path,
                 artifact_sha256=item["artifact_sha256"],
             )
+            if record.model_id in models:
+                raise ValueError(f"duplicate model_id: {record.model_id}")
             models[record.model_id] = record
         return models
 

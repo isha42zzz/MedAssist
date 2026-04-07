@@ -95,6 +95,20 @@ def test_model_registry_accepts_non_risk_score_output_name(tmp_path):
     assert registry.get("cardio-risk-v1").output_spec.name == "probability"
 
 
+def test_model_registry_rejects_duplicate_model_ids(tmp_path):
+    model_path = tmp_path / "cardio-risk-v1.onnx"
+    build_demo_model(model_path)
+    payload = demo_registry_payload(model_path)
+    duplicate = json.loads(json.dumps(payload["models"][0]))
+    duplicate["summary"] = "duplicate entry"
+    payload["models"].append(duplicate)
+    registry_path = tmp_path / "registry.json"
+    registry_path.write_text(json.dumps(payload))
+
+    with pytest.raises(ValueError, match="duplicate model_id: cardio-risk-v1"):
+        ModelRegistry(registry_path)
+
+
 def test_model_registry_rejects_duplicate_feature_names(tmp_path):
     model_path = tmp_path / "cardio-risk-v1.onnx"
     build_demo_model(model_path)

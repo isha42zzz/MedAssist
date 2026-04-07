@@ -125,10 +125,10 @@ class AttestationReportProducor():
     GUEST_ATTESTATION_SM3_SIZE = 32
     GUEST_ATTESTATION_REPORT_SIZE = 2548
 
-    report = b''
-    userdata = b''
+    report = ''
+    userdata = ''
     def __init__(self, userdata):
-        if userdata is not None:
+        if not userdata is None:
             self.userdata = userdata
         self.report = self.__get_report_from_csv_guest()
         return
@@ -146,16 +146,13 @@ class AttestationReportProducor():
         buf = ctypes.create_string_buffer(4096)
 
         # generate random user_data and mnonce
-        if self.userdata:
+        if len(self.userdata):
             data = bytearray(self.GUEST_ATTESTATION_DATA_SIZE)
-            if isinstance(self.userdata, (bytes, bytearray)):
-                userdata_bytes = bytes(self.userdata)
-            else:
-                userdata_bytes = str(self.userdata).encode("utf-8")
-            if len(userdata_bytes) > self.GUEST_ATTESTATION_DATA_SIZE:
+            userdata_bytes = self.userdata.encode("utf-8")
+            if len(self.userdata) > self.GUEST_ATTESTATION_DATA_SIZE:
                 data[:] = userdata_bytes[0:self.GUEST_ATTESTATION_DATA_SIZE]
             else:
-                data[0:len(userdata_bytes)] = userdata_bytes[0:self.GUEST_ATTESTATION_DATA_SIZE]
+                data[self.GUEST_ATTESTATION_DATA_SIZE - len(userdata_bytes):] = userdata_bytes[0:self.GUEST_ATTESTATION_DATA_SIZE]
         else:
             data = os.urandom(self.GUEST_ATTESTATION_DATA_SIZE)
         data += os.urandom(self.GUEST_ATTESTATION_NONCE_SIZE)
@@ -408,7 +405,7 @@ class AttestationReportVerifier():
 
         print("****Verified Attestation Report****")
         print(json.dumps(parsed_report, indent=4))
-        return parsed_report
+        return
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Utility for Hygon China Secure Virtualization (CSV) remote attestation, " \
