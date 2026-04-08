@@ -1,20 +1,23 @@
 from __future__ import annotations
 
 import secrets
-from contextlib import asynccontextmanager
+from ipaddress import ip_address
 from threading import Lock
 from typing import Any, Callable, Dict, Optional
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 from starlette.applications import Starlette
-from starlette.routing import Mount
 import uvicorn
 
 from shared.attestation import build_user_data, verify_report
 
-from .tee_session_client import SessionDisconnectedError, TeeServiceClient
 from .config import HospitalMCPConfig
 from .sessions import ManagedContextRecord, WorkflowContextStore
+from .tee_session_client import SessionDisconnectedError, TeeServiceClient
+
+_LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
+_WILDCARD_HOSTS = {"0.0.0.0", "::"}
 
 
 class HospitalGateway:
@@ -196,7 +199,64 @@ class HospitalGateway:
 
 _config: Optional[HospitalMCPConfig] = None
 _gateway: Optional[HospitalGateway] = None
-_mcp = FastMCP("MedAssist Hospital MCP", stateless_http=True, json_response=True)
+_mcp: Optional[FastMCP[Any]] = None
+
+
+def _format_allowed_host(host: str) -> str:
+    try:
+        parsed = ip_address(host)
+    except ValueError:
+        return f"{host}:*"
+    if parsed.version == 6:
+        return f"[{host}]:*"
+    return f"{host}:*"
+
+
+def _build_transport_security(config: HospitalMCPConfig) -> TransportSecuritySettings:
+    if config.allowed_hosts or config.allowed_origins:
+        if not config.allowed_hosts:
+            raise ValueError("MEDASSIST_MCP_ALLOWED_HOSTS must be set when transport security is configured")
+        return TransportSecuritySettings(
+            enable_dns_rebinding_protection=True,
+            allowed_hosts=config.allowed_hosts,
+            allowed_origins=config.allowed_origins,
+        )
+
+    if config.host in _LOOPBACK_HOSTS:
+        return TransportSecuritySettings(
+            enable_dns_rebinding_protection=True,
+            allowed_hosts=["127.0.0.1:*", "localhost:*", "[::1]:*"],
+            allowed_origins=["http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*"],
+        )
+
+    if config.host in _WILDCARD_HOSTS:
+        raise ValueError(
+            "MEDASSIST_MCP_ALLOWED_HOSTS is required when MEDASSIST_MCP_HOST is set to 0.0.0.0 or ::"
+        )
+
+    return TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=[_format_allowed_host(config.host)],
+        allowed_origins=[],
+    )
+
+
+def _build_mcp(config: HospitalMCPConfig) -> FastMCP[Any]:
+    mcp = FastMCP(
+        "MedAssist Hospital MCP",
+        host=config.host,
+        port=config.port,
+        streamable_http_path=config.path,
+        stateless_http=True,
+        json_response=True,
+        transport_security=_build_transport_security(config),
+    )
+    mcp.tool()(list_models)
+    mcp.tool()(describe_model)
+    mcp.tool()(invoke_diagnosis)
+    mcp.tool()(get_attestation_info)
+    mcp.tool()(release_context)
+    return mcp
 
 
 def get_config() -> HospitalMCPConfig:
@@ -213,19 +273,23 @@ def get_gateway() -> HospitalGateway:
     return _gateway
 
 
-@_mcp.tool()
+def get_mcp() -> FastMCP[Any]:
+    global _mcp
+    if _mcp is None:
+        _mcp = _build_mcp(get_config())
+    return _mcp
+
+
 def list_models(workflow_context_id: str) -> Dict[str, Any]:
     """List diagnosis models using a workflow-scoped internally managed TEE session."""
     return get_gateway().list_models(workflow_context_id)
 
 
-@_mcp.tool()
 def describe_model(workflow_context_id: str, model_id: str) -> Dict[str, Any]:
     """Return model input/output metadata for a workflow-scoped context."""
     return get_gateway().describe_model(workflow_context_id, model_id)
 
 
-@_mcp.tool()
 def invoke_diagnosis(
     workflow_context_id: str,
     request_id: str,
@@ -241,32 +305,18 @@ def invoke_diagnosis(
     )
 
 
-@_mcp.tool()
 def get_attestation_info(workflow_context_id: str) -> Dict[str, Any]:
     """Return attestation evidence for the internally managed TEE session of a workflow context."""
     return get_gateway().get_attestation_info(workflow_context_id)
 
 
-@_mcp.tool()
 def release_context(workflow_context_id: str) -> Dict[str, Any]:
     """Release a workflow-scoped context and best-effort close its internal TEE session."""
     return get_gateway().release_context(workflow_context_id)
 
 
 def build_app() -> Starlette:
-    config = get_config()
-
-    @asynccontextmanager
-    async def lifespan(app: Starlette):
-        async with _mcp.session_manager.run():
-            yield
-
-    return Starlette(
-        lifespan=lifespan,
-        routes=[
-            Mount(config.path, app=_mcp.streamable_http_app()),
-        ]
-    )
+    return get_mcp().streamable_http_app()
 
 
 def main() -> None:

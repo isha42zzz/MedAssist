@@ -89,7 +89,11 @@ uv run --env-file .env.tee medassist-tee
 
 关键变量：
 
+- `MEDASSIST_MCP_HOST`
 - `MEDASSIST_MCP_PORT`
+- `MEDASSIST_MCP_PATH`
+- `MEDASSIST_MCP_ALLOWED_HOSTS`
+- `MEDASSIST_MCP_ALLOWED_ORIGINS`
 - `MEDASSIST_TEE_TARGET`
 - `MEDASSIST_HOSPITAL_ORG_ID`
 - `MEDASSIST_CONTEXT_TTL_SECONDS`
@@ -106,7 +110,11 @@ uv run --env-file .env.hospital medassist-mcp
 说明：
 
 - `MEDASSIST_TEE_TARGET` 是医院侧指定 TEE 服务地址的地方，格式是 `ip:port`
-- 医院侧 MCP 默认监听端口是 `9123`
+- 医院侧 MCP 默认监听地址是 `http://<host>:9123/mcp`
+- 当 `MEDASSIST_MCP_HOST` 配成 `0.0.0.0` 或 `::` 时，必须显式设置 `MEDASSIST_MCP_ALLOWED_HOSTS`
+- `MEDASSIST_MCP_ALLOWED_HOSTS` 是逗号分隔的 Host 白名单，例如 `10.17.41.30:*,server:*`
+- `MEDASSIST_MCP_ALLOWED_ORIGINS` 是逗号分隔的 Origin 白名单，浏览器接入时再配置即可
+- 如果设置了 `MEDASSIST_MCP_ALLOWED_ORIGINS`，也必须同时设置 `MEDASSIST_MCP_ALLOWED_HOSTS`
 - 配置文件中的相对路径默认按项目根目录解析
 - `models/registry.json` 里的 `artifact_uri` 如果写相对路径，则按 `registry.json` 所在目录解析
 - `MEDASSIST_TEE_TIMEOUT_SECONDS` 控制医院侧 TCP 连接和收发超时
@@ -115,6 +123,31 @@ uv run --env-file .env.hospital medassist-mcp
 - 这一轮通过拉长 TTL 来降低长流程被误清理的概率，不是机制级修复；正常流程仍然建议在 workflow 末尾调用 `release_context`
 - 如果 workflow 异常退出或遗漏 `release_context`，本地 context 和 TEE session 可能最长保留约 3 小时
 - 当前一期不依赖业务 CA、mTLS 或服务端证书来判断 TEE 可信性
+
+验证 MCP 是否可用：
+
+- 不要用 `curl -I` 或 `HEAD /mcp` 做探活，MCP 端点不是这样设计的
+- 推荐直接发一个 `POST /mcp` 的 `initialize` 请求
+
+```bash
+curl -i -X POST http://10.17.41.30:9123/mcp \
+  -H 'Host: 10.17.41.30:9123' \
+  -H 'Accept: application/json' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": "1",
+    "method": "initialize",
+    "params": {
+      "protocolVersion": "2025-03-26",
+      "capabilities": {},
+      "clientInfo": {
+        "name": "curl",
+        "version": "1.0"
+      }
+    }
+  }'
+```
 
 ## 交互时序
 

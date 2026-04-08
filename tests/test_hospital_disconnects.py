@@ -75,6 +75,8 @@ def _build_gateway() -> HospitalGateway:
             hospital_org_id="hospital-a",
             session_ttl_seconds=300,
             tee_timeout_seconds=10.0,
+            allowed_hosts=[],
+            allowed_origins=[],
         )
     )
 

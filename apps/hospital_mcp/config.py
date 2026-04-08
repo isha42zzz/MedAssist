@@ -4,6 +4,11 @@ import os
 from dataclasses import dataclass
 
 
+def _split_csv_env(name: str) -> list[str]:
+    raw = os.getenv(name, "")
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
 @dataclass(frozen=True)
 class HospitalMCPConfig:
     host: str
@@ -13,6 +18,8 @@ class HospitalMCPConfig:
     hospital_org_id: str
     session_ttl_seconds: int
     tee_timeout_seconds: float
+    allowed_hosts: list[str]
+    allowed_origins: list[str]
 
     @classmethod
     def from_env(cls) -> "HospitalMCPConfig":
@@ -27,4 +34,6 @@ class HospitalMCPConfig:
             hospital_org_id=os.getenv("MEDASSIST_HOSPITAL_ORG_ID", "hospital-a"),
             session_ttl_seconds=int(context_ttl),
             tee_timeout_seconds=float(os.getenv("MEDASSIST_TEE_TIMEOUT_SECONDS", "10.0")),
+            allowed_hosts=_split_csv_env("MEDASSIST_MCP_ALLOWED_HOSTS"),
+            allowed_origins=_split_csv_env("MEDASSIST_MCP_ALLOWED_ORIGINS"),
         )
